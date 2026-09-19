@@ -24,6 +24,7 @@ from soulsync.memory.store import MemoryStore
 from soulsync.perception.face import FaceEngine, FaceMatch
 from soulsync.perception.fuse import IdentityResolver, ResolvedIdentity
 from soulsync.perception.voice import VoiceEngine, VoiceMatch
+from soulsync.perception.voice_emotion import VoiceEmotionEngine
 
 
 @dataclass
@@ -54,6 +55,7 @@ class CompanionAgent:
         self.persona = PersonaBuilder()
         self.face = FaceEngine(store)
         self.voice = VoiceEngine(store)
+        self.voice_emo = VoiceEmotionEngine()
         self.resolver = IdentityResolver(store)
         self.emotion_fusion = EmotionFusion(
             crisis_keywords=s.crisis_keywords_zh + s.crisis_keywords_en)
@@ -89,22 +91,77 @@ class CompanionAgent:
         hits = self.store.search(uid, qvec, top_k=s.memory_recall_top_k)
         memories_used = [h[0].content for h in hits]
 
-        # 5) LLM 生成
+        # 5) LLM 生成（多轮上下文进 messages）
         system = self.persona.build_system(
             user_id=uid, language=self.persona.detect_language(inp.text),
             profile=self.store.get_profile(uid), memories=memories_used,
             emotion_label=emotion.label, emotion_valence=emotion.valence,
             identity_name=identity.name)
-        history = [{"role": "user" if i % 2 == 0 else "assistant", "content": m.content}
-                   for i, m in enumerate(self._working[uid])]
-        reply = await self.llm.complete(inp.text, system=system)
-        _ = history  # 简化：上下文由 system+working memory 承载（V2 改多轮 messages）
+        history = self._build_history(uid)
+
+        reply = await self.llm.complete(inp.text, system=system, history=history)
 
         # 6) 写入工作记忆 + 待反思队列
         self._remember(uid, inp, reply, emotion)
 
         # 7) 周期性反思（会话末由 API 层触发 consolidate/reflect）
         return TurnOutput(reply, identity, emotion, memories_used)
+
+    async def turn_stream(self, inp: TurnInput):
+        """流式版 turn：先做感知/情绪/检索，再逐 token yield。
+
+        产出: 先 dict（元信息：identity/emotion/memories/crisis），后 str 增量，
+        结束时 dict（{"done": true, "turn_id", "reply"}）。
+        """
+        s = get_settings()
+        uid = inp.user_id
+
+        face_match = self._try_face(uid, inp)
+        voice_match = self._try_voice(uid, inp)
+        identity = self.resolver.resolve(uid, face_match, voice_match)
+
+        text_emo = TextEmotion(crisis=self.emotion_fusion.detect_crisis(inp.text))
+        voice_emo = self._try_voice_emotion(inp)
+        emotion = self.emotion_fusion.fuse(text_emo, voice_emo)
+
+        if emotion.crisis:
+            reply = self._crisis_reply(inp.text)
+            self._remember(uid, inp, reply, emotion)
+            yield {"identity": identity.name, "emotion": emotion.label,
+                   "memories": [], "crisis": True}
+            yield reply
+            yield {"done": True, "reply": reply}
+            return
+
+        qvec = await self.embedder.embed(inp.text)
+        hits = self.store.search(uid, qvec, top_k=s.memory_recall_top_k)
+        memories_used = [h[0].content for h in hits]
+
+        system = self.persona.build_system(
+            user_id=uid, language=self.persona.detect_language(inp.text),
+            profile=self.store.get_profile(uid), memories=memories_used,
+            emotion_label=emotion.label, emotion_valence=emotion.valence,
+            identity_name=identity.name)
+        history = self._build_history(uid)
+
+        yield {"identity": identity.name, "emotion": emotion.label,
+               "memories": memories_used, "crisis": False}
+
+        parts: list[str] = []
+        async for delta in self.llm.stream(inp.text, system=system, history=history):
+            parts.append(delta)
+            yield delta
+        reply = "".join(parts)
+        self._remember(uid, inp, reply, emotion)
+        yield {"done": True, "reply": reply}
+
+    def _build_history(self, uid: str) -> list[dict]:
+        """工作记忆 → messages（成对 user/assistant，去掉最后半轮）。"""
+        msgs: list[dict] = []
+        for rec in list(self._working[uid])[:-1] if self._working[uid] else []:
+            msgs.append({"role": "user", "content": rec.user_text})
+            msgs.append({"role": "assistant", "content": rec.assistant_text})
+        return msgs
 
     # ---------- 会话结束：反思 ----------
 
@@ -159,9 +216,13 @@ class CompanionAgent:
             return None
 
     def _try_voice_emotion(self, inp: TurnInput) -> VoiceEmotion | None:
-        """V1：无独立 SER 模型时，从声纹能量特征粗估 arousal（工程兜底）。"""
+        """优先 emotion2vec SER；不可用时能量特征兜底 [S30]。"""
         if inp.voice_wav is None or inp.voice_wav.size == 0:
             return None
+        ser = self.voice_emo.infer(inp.voice_wav, inp.sample_rate)
+        if ser is not None:
+            return ser
+        # 能量特征兜底（粗估）
         wav = inp.voice_wav
         rms = float(np.sqrt(np.mean(wav ** 2)))
         zcr = float(np.mean(np.abs(np.diff(np.sign(wav))) > 0))

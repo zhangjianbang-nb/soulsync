@@ -12,6 +12,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.soulsync.app.AppSession
 import com.soulsync.app.R
+import com.soulsync.app.capture.MicCapture
 import com.soulsync.app.net.SoulSyncApi
 import kotlinx.coroutines.launch
 
@@ -57,6 +58,10 @@ fun ChatPage(session: AppSession) {
     val bubbles = remember { mutableStateListOf<Bubble>() }
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
+    var recording by remember { mutableStateOf(false) }
+    var startRecording by remember { mutableStateOf(false) }
+    var pendingVoice by remember { mutableStateOf<ByteArray?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     var identityName by remember { mutableStateOf<String?>(null) }
     var emotion by remember { mutableStateOf<String?>(null) }
     val api = session.api
@@ -83,22 +88,68 @@ fun ChatPage(session: AppSession) {
                 placeholder = { Text(stringResource(R.string.chat_hint)) },
                 maxLines = 4,
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(6.dp))
+            // 语音按钮：权限检查 → 录 4 秒语音随消息上传（声纹+语音情绪）
+            val permLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+            ) { granted -> if (granted) startRecording = true }
+            OutlinedButton(
+                onClick = {
+                    if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        startRecording = true
+                    } else {
+                        permLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                enabled = !recording && !sending && api != null,
+            ) {
+                Text(if (recording) "●" else stringResource(R.string.mic))
+            }
+            androidx.compose.runtime.LaunchedEffect(startRecording) {
+                if (startRecording && !recording) {
+                    startRecording = false
+                    recording = true
+                    val pcm = runCatching {
+                        MicCapture.recordPcm(context, 4.0f)
+                    }.getOrNull()
+                    pendingVoice = pcm
+                    recording = false
+                }
+            }
+            Spacer(Modifier.width(6.dp))
             Button(onClick = {
                 val text = input.trim()
                 if (text.isEmpty() || sending || api == null) return@Button
                 input = ""
                 sending = true
                 bubbles.add(Bubble(true, text))
+                // 占位气泡：流式增量实时填充
+                val bubbleIdx = bubbles.size
+                bubbles.add(Bubble(false, ""))
+                val voice = pendingVoice
+                pendingVoice = null
                 scope.launch {
                     try {
-                        val r = api.chat(session.userId.value, text)
-                        bubbles.add(Bubble(false, r.reply,
-                            meta = "${r.emotionLabel}(${r.emotionValence})"))
-                        identityName = r.identityName ?: identityName
-                        emotion = r.emotionLabel
+                        val final = api.chatStream(
+                            session.userId.value, text, voicePcm16k = voice,
+                            onMeta = { name, emo, _ ->
+                                name?.let { identityName = it }
+                                emotion = emo
+                            },
+                            onDelta = { delta ->
+                                // Compose list 元素不可变：用替换触发重组
+                                val cur = bubbles[bubbleIdx]
+                                bubbles[bubbleIdx] = cur.copy(text = cur.text + delta)
+                            },
+                        )
+                        bubbles[bubbleIdx] = bubbles[bubbleIdx].copy(
+                            meta = emotion?.let { e -> "$e" })
+                        if (final.isEmpty()) {
+                            bubbles[bubbleIdx] = bubbles[bubbleIdx].copy(text = "…")
+                        }
                     } catch (e: Exception) {
-                        bubbles.add(Bubble(false, "⚠ ${e.message}"))
+                        bubbles[bubbleIdx] = Bubble(false, "⚠ ${e.message}")
                     } finally { sending = false }
                 }
             }, enabled = !sending && api != null) {

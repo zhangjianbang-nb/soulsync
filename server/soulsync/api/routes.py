@@ -5,6 +5,7 @@ import base64
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from soulsync.config import get_settings
@@ -69,6 +70,40 @@ def make_router(agent) -> APIRouter:
             emotion={"label": out.emotion.label, "valence": out.emotion.valence,
                      "arousal": out.emotion.arousal, "source": out.emotion.source},
             memories_used=out.memories_used, crisis=out.crisis)
+
+    @router.post("/v1/chat/stream")
+    async def chat_stream(req: ChatRequest):
+        """SSE 流式对话。事件序列：
+        {"type":"meta", ...} → {"type":"delta","text":...}*...} → {"type":"done",...}
+        """
+        from soulsync.agent.core import TurnInput
+        face_bgr = _decode_image(req.face_b64)
+        voice = _decode_wav(req.voice_wav_b64)
+        inp = TurnInput(user_id=req.user_id, text=req.text,
+                        face_bgr=face_bgr, voice_wav=voice, sample_rate=req.sample_rate)
+
+        async def gen():
+            import json as _json
+
+            def sse(obj: dict) -> str:
+                return "data: " + _json.dumps(obj, ensure_ascii=False) + "\n\n"
+
+            try:
+                async for item in agent.turn_stream(inp):
+                    if isinstance(item, dict):
+                        etype = "done" if item.get("done") else "meta"
+                        payload = dict(item)
+                        payload.pop("done", None)
+                        payload["type"] = etype
+                        yield sse(payload)
+                    else:
+                        yield sse({"type": "delta", "text": item})
+            except Exception as e:
+                yield sse({"type": "error", "message": str(e)})
+
+        return StreamingResponse(gen(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache",
+                                          "X-Accel-Buffering": "no"})
 
     @router.post("/v1/session/end")
     async def session_end(req: ProactiveRequest):

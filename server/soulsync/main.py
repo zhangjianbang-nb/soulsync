@@ -10,7 +10,7 @@ from soulsync.memory.store import MemoryStore
 
 def create_app() -> FastAPI:
     s = get_settings()
-    app = FastAPI(title="SoulSync", version="0.1.0",
+    app = FastAPI(title="SoulSync", version="0.2.0",
                   description="Multimodal emotional companion agent")
     store = MemoryStore(s.db_path, embed_dim=s.embed_dim)
     app.state.store = store
@@ -20,10 +20,20 @@ def create_app() -> FastAPI:
     agent = CompanionAgent(store)
     app.state.agent = agent
 
+    # 后台任务（反思定时器 + 每日遗忘衰减）
+    from soulsync.agent.background import BackgroundTasks
+    bg = BackgroundTasks(agent)
+    app.state.background = bg
+
     app.include_router(make_router(agent))
 
+    @app.on_event("startup")
+    async def _start():
+        bg.start()
+
     @app.on_event("shutdown")
-    def _close():
+    async def _shutdown():
+        await bg.stop()
         store.close()
 
     return app

@@ -74,6 +74,59 @@ class SoulSyncApi(private var baseUrl: String) {
         )
     }
 
+    /** SSE 流式对话：onMeta 收元信息，onDelta 逐段回调。挂起至流结束，返回完整回复。 */
+    suspend fun chatStream(
+        userId: String, text: String,
+        faceJpeg: ByteArray? = null,
+        voicePcm16k: ByteArray? = null,
+        onMeta: (identityName: String?, emotionLabel: String, crisis: Boolean) -> Unit = { _, _, _ -> },
+        onDelta: (String) -> Unit = {},
+    ): String = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("user_id", userId)
+            put("text", text)
+            faceJpeg?.let { put("face_b64", Base64.encodeToString(it, Base64.NO_WRAP)) }
+            voicePcm16k?.let {
+                put("voice_wav_b64", Base64.encodeToString(floatBytes(it), Base64.NO_WRAP))
+            }
+        }
+        val req = Request.Builder()
+            .url("$baseUrl/v1/chat/stream")
+            .post(body.toString().toRequestBody(json))
+            .build()
+        val response = client.newCall(req).execute()
+        response.use { resp ->
+            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
+            val source = resp.body?.source() ?: throw IOException("empty body")
+            val sb = StringBuilder()
+            while (true) {
+                val line = source.readUtf8Line() ?: break
+                if (!line.startsWith("data: ")) continue
+                val payload = line.removePrefix("data: ")
+                if (payload == "[DONE]") break
+                val j = JSONObject(payload)
+                when (j.optString("type")) {
+                    "meta" -> onMeta(
+                        if (j.isNull("identity")) null else j.optString("identity"),
+                        j.optString("emotion", "neutral"),
+                        j.optBoolean("crisis", false),
+                    )
+                    "delta" -> {
+                        val t = j.optString("text", "")
+                        sb.append(t)
+                        onDelta(t)
+                    }
+                    "done" -> {
+                        val final = j.optString("reply", "")
+                        if (final.isNotEmpty() && sb.isEmpty()) sb.append(final)
+                    }
+                    "error" -> throw IOException(j.optString("message", "stream error"))
+                }
+            }
+            sb.toString()
+        }
+    }
+
     suspend fun proactive(userId: String): String? = withContext(Dispatchers.IO) {
         val resp = post("/v1/proactive", JSONObject().put("user_id", userId))
         val j = JSONObject(resp)
