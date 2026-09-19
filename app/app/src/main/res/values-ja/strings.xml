@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SoulSync</string>
+    <string name="server_url">サーバーアドレス</string>
+    <string name="connect">接続</string>
+    <string name="chat_hint">何か話してください…</string>
+    <string name="send">送信</string>
+    <string name="camera">カメラ</string>
+    <string name="mic">マイク</string>
+    <string name="memories">記憶</string>
+    <string name="settings">設定</string>
+    <string name="proactive_care">プロアクティブケア</string>
+    <string name="emotion_state">感情</string>
+    <string name="known_as">あなたの名前</string>
+    <string name="session_end">セッション終了（AIが振り返ります）</string>
+    <string name="forget_me">忘れてください（全データ削除）</string>
+    <string name="memory_empty">まだ記憶がありません</string>
+    <string name="not_connected">サーバー未接続</string>
+    <string name="crisis_message">そう言ってくれてありがとう。専門的なサポートを検討してください：日本 いのちの電話 0570-783-556。</string>
+</resources>

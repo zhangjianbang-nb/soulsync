@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+*.db
+.pytest_cache/
+server/.venv/
+app/.gradle/
+app/build/
+app/app/build/
+app/local.properties
+*.apk
+.DS_Store

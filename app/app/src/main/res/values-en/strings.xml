@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SoulSync</string>
+    <string name="server_url">Server URL</string>
+    <string name="connect">Connect</string>
+    <string name="chat_hint">Say something…</string>
+    <string name="send">Send</string>
+    <string name="camera">Camera</string>
+    <string name="mic">Microphone</string>
+    <string name="memories">Memories</string>
+    <string name="settings">Settings</string>
+    <string name="proactive_care">Proactive care</string>
+    <string name="emotion_state">Emotion</string>
+    <string name="known_as">It knows you as</string>
+    <string name="session_end">End session (AI will reflect)</string>
+    <string name="forget_me">Forget me (delete all data)</string>
+    <string name="memory_empty">No memories yet — chat more</string>
+    <string name="not_connected">Server not connected</string>
+    <string name="crisis_message">I\'m really glad you told me. Please consider reaching out to professional help: 988 (US) / findahelpline.com.</string>
+</resources>

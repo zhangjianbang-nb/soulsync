@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SoulSync</string>
+    <string name="server_url">服务器地址</string>
+    <string name="connect">连接</string>
+    <string name="chat_hint">说点什么…</string>
+    <string name="send">发送</string>
+    <string name="camera">摄像头</string>
+    <string name="mic">麦克风</string>
+    <string name="memories">记忆</string>
+    <string name="settings">设置</string>
+    <string name="proactive_care">主动关怀</string>
+    <string name="emotion_state">情绪</string>
+    <string name="known_as">TA 记得你叫</string>
+    <string name="session_end">结束本次会话（AI 会反思总结）</string>
+    <string name="forget_me">遗忘我（删除全部数据）</string>
+    <string name="memory_empty">还没有记忆，多聊聊吧</string>
+    <string name="not_connected">未连接服务器</string>
+    <string name="crisis_message">听到你这么说很心疼。请考虑联系专业援助：全国心理援助热线 12356。</string>
+</resources>
